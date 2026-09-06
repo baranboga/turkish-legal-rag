@@ -1,0 +1,44 @@
+{
+  "name": "turkish-legal-rag",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "verify:db": "tsx scripts/00-verify-db.ts",
+    "fetch": "tsx scripts/01-fetch-data.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "embed": "tsx scripts/02-embed.ts",
+    "pinecone": "tsx scripts/03-pinecone-setup.ts",
+    "benchmark": "tsx scripts/04-benchmark.ts",
+    "sync-test": "tsx scripts/05-sync-test.ts"
+  },
+  "dependencies": {
+    "@pinecone-database/pinecone": "^8.2.0",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "next": "^15.5.24",
+    "openai": "^7.8.0",
+    "postgres": "^3.4.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "drizzle-kit": "^0.31.10",
+    "postcss": "^8.5.26",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "_frozen": "DONDURULMUS SORGU SETI (week-05-06). Bu 10 sorgunun 'id' ve 'text' alanlari ASLA degistirilmez. Ilerideki haftalarda YENI sorgu eklenebilir, ancak mevcut 10'unun metni/id'si degistirilirse haftalar arasi sayilar karsilastirilamaz hale gelir. 'type': lexical = karar metniyle dogrudan terim eslesmesi beklenen sorgu; semantic = kelime ortakligi olmadan yalnizca anlamca eslesen sorgu. FILTERED_QUERY_IDS (src/config.ts) = q02, q05, q08 sorgulari ayrica { yearGte: 2019 } filtresiyle de kosulur.",
+  "queries": [
+    { "id": "q01", "type": "lexical", "text": "Anayasa Mahkemesi iptal karari" },
+    { "id": "q02", "type": "lexical", "text": "mulkiyet hakkinin sinirlandirilmasi ve kamulastirma" },
+    { "id": "q03", "type": "lexical", "text": "kamu gorevlilerinin disiplin cezasi" },
+    { "id": "q04", "type": "lexical", "text": "vergi kanununun Anayasaya aykiriligi" },
+    { "id": "q05", "type": "lexical", "text": "emeklilik ve sosyal guvenlik haklari" },
+    { "id": "q06", "type": "semantic", "text": "Devlet bir kisinin evini elinden alip bedelini odemek zorunda mi?" },
+    { "id": "q07", "type": "semantic", "text": "Insanlar dusuncelerini korkmadan aciklayabilmeli" },
+    { "id": "q08", "type": "semantic", "text": "Kadinlar ve erkekler yasa onunde ayni muameleyi gormeli" },
+    { "id": "q09", "type": "semantic", "text": "Isinden cikarilan bir calisan bu karara itiraz edebilir mi?" },
+    { "id": "q10", "type": "semantic", "text": "Yasada yazmayan bir fiil yuzunden biri cezalandirilabilir mi?" }
+  ]
+}
