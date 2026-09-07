@@ -1,0 +1,54 @@
+{
+  "pgvector-openai": {
+    "comboId": "pgvector-openai",
+    "store": "pgvector",
+    "provider": "openai",
+    "count": 400,
+    "failures": 0,
+    "tokens": 329793,
+    "estCostUsd": 0.006596,
+    "embedTimeMs": 3230.26,
+    "storeTimeMs": 7722.61,
+    "totalTimeMs": 10952.87,
+    "errors": [],
+    "indexedAt": "2026-09-06 (UI kosumundan yeniden olusturuldu)"
+  },
+  "pgvector-hf": {
+    "comboId": "pgvector-hf",
+    "store": "pgvector",
+    "provider": "hf",
+    "count": 400,
+    "failures": 0,
+    "embedTimeMs": 57387.73,
+    "storeTimeMs": 5606.79,
+    "totalTimeMs": 62994.52,
+    "errors": [],
+    "indexedAt": "2026-09-06 (UI kosumundan yeniden olusturuldu)"
+  },
+  "pinecone-openai": {
+    "comboId": "pinecone-openai",
+    "store": "pinecone",
+    "provider": "openai",
+    "count": 400,
+    "failures": 0,
+    "tokens": 329793,
+    "estCostUsd": 0.006596,
+    "embedTimeMs": 3107.89,
+    "storeTimeMs": 11431.09,
+    "totalTimeMs": 14538.98,
+    "errors": [],
+    "indexedAt": "2026-09-06 (UI kosumundan yeniden olusturuldu)"
+  },
+  "pinecone-hf": {
+    "comboId": "pinecone-hf",
+    "store": "pinecone",
+    "provider": "hf",
+    "count": 400,
+    "failures": 0,
+    "embedTimeMs": 54224.03,
+    "storeTimeMs": 13875.56,
+    "totalTimeMs": 68099.59,
+    "errors": [],
+    "indexedAt": "2026-09-06 (UI kosumundan yeniden olusturuldu)"
+  }
+}

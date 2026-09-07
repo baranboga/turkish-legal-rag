@@ -17,11 +17,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/" className="font-semibold">
               turkish-legal-rag
             </Link>
-            <Link href="/compare" className="hover:underline">
-              /compare
+            <Link href="/index" className="hover:underline">
+              /index
             </Link>
-            <Link href="/metrics" className="hover:underline">
-              /metrics
+            <Link href="/search" className="hover:underline">
+              /search
+            </Link>
+            <Link href="/benchmark" className="hover:underline">
+              /benchmark
             </Link>
             <span className="ml-auto rounded bg-neutral-100 px-2 py-1 font-mono text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
               run: {CURRENT_RUN}
