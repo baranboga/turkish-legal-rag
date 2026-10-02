@@ -1,11 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { COMBOS } from "@/benchmark/combos";
-import type { BenchmarkResponse } from "@/benchmark/api-types";
+import type { BenchmarkEvent, BenchmarkResponse } from "@/benchmark/api-types";
 
 const LS_KEY = "tlr-predictions";
 const f2 = (n: number | undefined | null) => (n == null ? "—" : n.toFixed(2));
+
+/** Tablo altina acilir-kapanir "nasil okunur?" yardim kutusu. */
+function TableHelp({ children }: { children: ReactNode }) {
+  return (
+    <details className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900/40 dark:text-neutral-400">
+      <summary className="cursor-pointer select-none font-medium text-neutral-700 dark:text-neutral-300">
+        Bu tabloyu nasıl okumalı?
+      </summary>
+      <ul className="mt-2 list-disc space-y-1.5 pl-4 leading-relaxed">{children}</ul>
+    </details>
+  );
+}
 
 export default function BenchmarkClient() {
   const [predInputs, setPredInputs] = useState<Record<string, string>>({});
@@ -13,6 +25,7 @@ export default function BenchmarkClient() {
   const [data, setData] = useState<BenchmarkResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ label: string; done: number; total: number } | null>(null);
 
   // Mount'ta SADECE kayitli tahminleri yukle — otomatik benchmark YOK.
   useEffect(() => {
@@ -42,17 +55,45 @@ export default function BenchmarkClient() {
     if (loading) return;
     setLoading(true);
     setError(null);
+    setData(null);
+    setProgress({ label: "başlıyor...", done: 0, total: 0 });
     try {
       const res = await fetch("/api/benchmark", { method: "POST", cache: "no-store" });
-      if (!res.ok) {
-        const t = await res.text();
-        throw new Error(`HTTP ${res.status}: ${t}`);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+      // NDJSON stream: satır satır ilerleme + son 'result' olayı.
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          const ev = JSON.parse(line) as BenchmarkEvent;
+          if (ev.type === "phase") {
+            setProgress({ label: ev.message, done: 0, total: 0 });
+          } else if (ev.type === "progress") {
+            const prefix = ev.scope === "embed" ? "embedding" : "arama (combo)";
+            setProgress({ label: `${prefix} · ${ev.label}`, done: ev.done, total: ev.total });
+          } else if (ev.type === "result") {
+            setData(ev.data);
+            setProgress(null);
+          } else if (ev.type === "error") {
+            setError(ev.message);
+            setProgress(null);
+          }
+        }
       }
-      setData((await res.json()) as BenchmarkResponse);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   }
 
@@ -78,8 +119,9 @@ export default function BenchmarkClient() {
       <div>
         <h1 className="text-2xl font-semibold">/benchmark</h1>
         <p className="mt-1 text-xs text-neutral-500">
-          Sabit sorgu seti (queries.json) · sıralı koşum · ilk sorgu warm-up (istatistiğe girmez) ·
-          latency server-side
+          Sabit sorgu seti (queries.json) · 6 kombinasyon · her sorgu RUNS_PER_COMBO kez (embed 1
+          kez, arama tekrarlı) · sıralı koşum · ilk koşu warm-up (istatistiğe girmez) · latency
+          server-side
         </p>
       </div>
 
@@ -129,6 +171,21 @@ export default function BenchmarkClient() {
         )}
         {data && <span className="text-xs text-neutral-500">generatedAt: {data.generatedAt}</span>}
       </div>
+
+      {loading && progress && (
+        <div className="space-y-1">
+          <div className="h-2 w-full max-w-md overflow-hidden rounded bg-neutral-100 dark:bg-neutral-800">
+            <div
+              className="h-full bg-emerald-500 transition-all"
+              style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 5}%` }}
+            />
+          </div>
+          <p className="font-mono text-[11px] text-neutral-500">
+            {progress.label}
+            {progress.total ? ` · ${progress.done}/${progress.total}` : ""}
+          </p>
+        </div>
+      )}
 
       {error && (
         <pre className="whitespace-pre-wrap rounded bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
@@ -203,6 +260,33 @@ export default function BenchmarkClient() {
                 </tbody>
               </table>
             </div>
+
+            <TableHelp>
+              <li>
+                Her satır bir yöntem: hangi veritabanı (pgvector / Pinecone) + hangi embedding modeli
+                (OpenAI / HF). Tüm sayılar milisaniye (ms) — <strong>küçük = hızlı</strong>.
+              </li>
+              <li>
+                Bir aramanın süresi iki parçadan oluşur: <strong>embed</strong> (sorguyu sayıya çevirme) +{" "}
+                <strong>search</strong> (veritabanında bulma). İkisinin toplamı <strong>total</strong>&apos;dır.
+              </li>
+              <li>
+                <strong>p50</strong> = ortadaki süre, yani &quot;genelde ne kadar sürüyor&quot;.{" "}
+                <strong>p95</strong> = kötü durum: aramaların %95&apos;i bundan hızlı, kalan %5 daha yavaş
+                (ara sıra olan takılmalar). <strong>avg</strong> = ortalama.
+              </li>
+              <li>
+                Sadece veritabanının <strong>arama hızını</strong> kıyaslamak istersen{" "}
+                <strong>search avg</strong>&apos;e bak. Kullanıcının beklediği <strong>toplam süre</strong> için{" "}
+                <strong>total</strong>&apos;a bak.
+              </li>
+              <li>
+                <strong>embed avg</strong> aynı modelin satırlarında hep aynıdır (sorguyu çevirmek
+                veritabanından bağımsız). <strong>ölçülen/warmup</strong> = sayılan ölçüm / atılan ısınma;
+                ilk arama her zaman yavaş olduğu için sayılmaz.
+              </li>
+            </TableHelp>
+
             {data.combos.some((c) => c.errors.length > 0) && (
               <pre className="whitespace-pre-wrap rounded bg-red-50 p-3 text-[11px] text-red-700 dark:bg-red-950/40 dark:text-red-300">
                 {data.combos.flatMap((c) => c.errors.map((e) => `[${c.comboId}] ${e}`)).join("\n")}
@@ -245,6 +329,26 @@ export default function BenchmarkClient() {
                 </tbody>
               </table>
             </div>
+
+            <TableHelp>
+              <li>
+                Bu tablo tek bir soruya cevap verir: <strong>iki yöntem aynı belgeleri mi buluyor?</strong>
+              </li>
+              <li>
+                Her hücre = iki yöntemin ilk 5 sonucundan <strong>kaç tanesi ortak</strong> (0–5 arası, 10
+                sorgunun ortalaması). Yeşil koyuldukça ortaklık artar.
+              </li>
+              <li>
+                <strong>5</strong> = birebir aynı 5 belgeyi buldular. <strong>0&apos;a yakın</strong> =
+                neredeyse tamamen farklı belgeler. Köşegen (yöntem ↔ kendisi) hep 5&apos;tir, anlamsızdır.
+              </li>
+              <li>
+                Genel kural: <strong>aynı embedding modeli</strong> → sonuçlar neredeyse aynı (fark yalnızca
+                hızda). <strong>Farklı model</strong> (OpenAI ↔ HF) → sonuçlar farklı. Yani{" "}
+                <strong>hangi belgelerin</strong> bulunacağını embedding modeli, <strong>ne kadar hızlı</strong>{" "}
+                bulunacağını veritabanı belirler.
+              </li>
+            </TableHelp>
           </section>
         </>
       )}

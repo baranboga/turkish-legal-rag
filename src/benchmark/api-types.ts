@@ -32,6 +32,15 @@ export interface IndexResult {
   indexedAt?: string;
 }
 
+// --- /api/document ---
+export interface DocumentDetail {
+  id: number;
+  sourceId: string;
+  text: string;
+  year: number | null;
+  category: string | null;
+}
+
 // --- /api/search ---
 export interface SearchComboResult {
   comboId: string;
@@ -85,3 +94,10 @@ export interface BenchmarkResponse {
   combos: BenchComboStats[];
   overlap: OverlapCell[];
 }
+
+// --- /api/benchmark (NDJSON stream) ---
+export type BenchmarkEvent =
+  | { type: "phase"; message: string }
+  | { type: "progress"; scope: "embed" | "search"; label: string; done: number; total: number }
+  | { type: "result"; data: BenchmarkResponse }
+  | { type: "error"; message: string };

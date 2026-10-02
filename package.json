@@ -7,9 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 3001",
     "lint": "next lint",
     "verify:db": "tsx scripts/00-verify-db.ts",
     "fetch": "tsx scripts/01-fetch-data.ts",

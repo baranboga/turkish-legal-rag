@@ -5,7 +5,10 @@
  * 400 kayit ceker (tum dataset degil). HF datasets-server REST endpoint'i
  * publictir, token gerektirmez.
  *
- * Chunking YOK: her kararin ilk 2000 karakteri `text` olarak alinir.
+ * Chunking YOK (henuz): once ortak baslik blogu kirpilir (stripDecisionHeader —
+ * "ITIRAZIN KONUSU" / "IPTAL DAVASININ KONUSU" bolumunden baslatilir), sonra
+ * kalan metnin ilk `textMaxChars` karakteri `text` olarak alinir. Boylece 2000
+ * karakter ortak baslikla degil, gercek konu metniyle dolar.
  *
  * Yil cesitliligi (yearGte=2019 filtre testinin anlamli olmasi) icin dataset
  * boyunca 4 pencereden (her biri 100 kayit) STRATIFIED ornekleme yapilir;
@@ -14,6 +17,7 @@
 import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { DATASET } from "../src/config";
+import { stripDecisionHeader } from "../src/text";
 import type { RawRecord } from "../src/types";
 
 const BASE = "https://datasets-server.huggingface.co/rows";
@@ -87,7 +91,7 @@ async function main(): Promise<void> {
     for (const item of page.rows) {
       if (records.length >= DATASET.limit) break;
       const r = item.row;
-      const text = String(r.text ?? "").slice(0, DATASET.textMaxChars);
+      const text = stripDecisionHeader(String(r.text ?? "")).slice(0, DATASET.textMaxChars);
       if (item.truncated_cells?.includes("text")) truncatedText++;
       if (text.length < DATASET.textMaxChars) shortText++;
       records.push({

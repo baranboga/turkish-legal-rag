@@ -1,15 +1,17 @@
 import "server-only";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { RecordMetadata } from "@pinecone-database/pinecone";
 import {
   EMBED_DIM,
   OPENAI_PRICE_PER_1M_TOKENS,
   PINECONE_INDEX,
+  RUNS_PER_COMBO,
   TOP_K,
   resultsDir,
 } from "../config";
-import { loadRawRecords } from "../data";
+import { loadQueries, loadRawRecords } from "../data";
+import { stripDecisionHeader } from "../text";
 import { db } from "../db/client";
 import { documents, embeddingsHf, embeddingsOpenai } from "../db/schema";
 import { embedHfPassages } from "../embeddings/hf";
@@ -18,14 +20,18 @@ import { getPinecone } from "../pinecone";
 import { embedQuery, runSearch } from "../search";
 import { createHnswIndex } from "../search/pgvector";
 import type {
+  BenchComboStats,
+  BenchmarkEvent,
+  BenchmarkResponse,
   BenchRun,
+  DocumentDetail,
   EnrichedHit,
   IndexEvent,
   IndexResult,
   SearchComboResult,
 } from "./api-types";
-import { getCombo, type Combo } from "./combos";
-import { round } from "./stats";
+import { COMBOS, getIndexTarget, type Combo, type IndexTarget } from "./combos";
+import { avg, percentile, round } from "./stats";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -77,7 +83,13 @@ export async function ensureDocumentsSeeded(): Promise<SeedDoc[]> {
     .from(documents)
     .orderBy(documents.id);
 
-  if (existing.length === records.length) return existing;
+  // Mevcut veri raw.json ile ayni sayida VE on-islemden gecmis mi? Eski (ortak
+  // baslik kirpilmamis) metin DB'de kaldiysa yeniden seed et — stripDecisionHeader
+  // gibi on-isleme guncellemeleri canli /index yolunda da otomatik yansisin.
+  const upToDate =
+    existing.length === records.length &&
+    !existing.some((r) => stripDecisionHeader(r.text).length !== r.text.length);
+  if (upToDate) return existing;
 
   await db.execute(sql`TRUNCATE TABLE documents RESTART IDENTITY CASCADE`);
   const docs: SeedDoc[] = [];
@@ -110,8 +122,8 @@ export async function indexCombo(
   comboId: string,
   onProgress: (e: Extract<IndexEvent, { type: "progress" }>) => void
 ): Promise<IndexResult> {
-  const combo = getCombo(comboId);
-  if (!combo) throw new Error(`Bilinmeyen kombinasyon: ${comboId}`);
+  const combo: IndexTarget | undefined = getIndexTarget(comboId);
+  if (!combo) throw new Error(`Bilinmeyen index hedefi: ${comboId}`);
 
   onProgress({ type: "progress", phase: "seed", message: "documents seed ediliyor" });
   const docs = await ensureDocumentsSeeded();
@@ -226,6 +238,25 @@ export async function getDocTextMap(): Promise<Map<number, string>> {
   return new Map(rows.map((r) => [r.id, r.text]));
 }
 
+/**
+ * Tek doküman detayi (UI'da bir sonuca tiklayinca kararin kisa halini okumak icin).
+ * Saklanan metin zaten kararin ilk `DATASET.textMaxChars` karakteri (kisa hal).
+ */
+export async function getDocumentById(id: number): Promise<DocumentDetail | null> {
+  const rows = await db
+    .select({
+      id: documents.id,
+      sourceId: documents.sourceId,
+      text: documents.text,
+      year: documents.year,
+      category: documents.category,
+    })
+    .from(documents)
+    .where(eq(documents.id, id))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
 function enrich(hits: { documentId: number; score: number }[], docText: Map<number, string>): EnrichedHit[] {
   return hits.map((h, i) => ({
     rank: i + 1,
@@ -262,23 +293,117 @@ export async function runSingleSearch(
   }
 }
 
-/** Tek sorgu, tek kombinasyon — benchmark döngüsü için (warmup bayrağıyla). */
-export async function runBenchQuery(
-  query: string,
-  queryId: string,
-  warmup: boolean,
-  combo: Combo,
-  docText: Map<number, string>
-): Promise<BenchRun> {
-  const r = await runSingleSearch(query, combo, docText);
-  if (r.error) return { queryId, warmup, error: r.error };
+/** Bir kombinasyonun BenchRun'larindan ozet istatistik (warm-up haric). */
+function buildComboStats(combo: Combo, runs: BenchRun[]): BenchComboStats {
+  const measured = runs.filter((r) => !r.warmup && !r.error);
+  const totals = measured.map((r) => r.totalTime as number);
+  const searches = measured.map((r) => r.searchTime as number);
+  const embeds = measured.map((r) => r.embedTime as number);
   return {
-    queryId,
-    warmup,
-    embedTime: r.embedTime,
-    searchTime: r.searchTime,
-    totalTime: r.totalTime,
-    top5: r.top5,
+    comboId: combo.id,
+    store: combo.store,
+    provider: combo.provider,
+    total: { p50: percentile(totals, 50), p95: percentile(totals, 95), avg: avg(totals) },
+    search: { p50: percentile(searches, 50), p95: percentile(searches, 95), avg: avg(searches) },
+    embedAvg: avg(embeds),
+    measuredCount: measured.length,
+    warmupCount: runs.filter((r) => r.warmup).length,
+    errors: runs.filter((r) => r.error).map((r) => `${r.queryId}: ${r.error}`),
+    runs,
+  };
+}
+
+/**
+ * Tüm benchmark'ı koşar ve ilerlemeyi `onProgress` ile bildirir (NDJSON stream
+ * için — UI "takılı" görünmesin). Sorgu embedding'leri provider×sorgu başına
+ * BİR kez hesaplanır (statik 04-benchmark.ts ile aynı; aynı sorgu 3 combo'da
+ * tekrar embed EDİLMEZ), sonra her combo×sorgu için arama RUNS_PER_COMBO kez
+ * ölçülür. Böylece arama p50/p95 embed ağ gürültüsünden ayrışır. Sıralı —
+ * Promise.all YOK. Her combo'nun ilk koşusu warm-up (istatistiğe girmez).
+ */
+export async function runBenchmark(
+  onProgress: (e: Extract<BenchmarkEvent, { type: "phase" | "progress" }>) => void
+): Promise<BenchmarkResponse> {
+  const queries = loadQueries();
+  const docText = await getDocTextMap();
+
+  // 1) Embedding'ler: provider × sorgu başına bir kez (cache).
+  onProgress({ type: "phase", message: "sorgu embedding'leri hesaplanıyor" });
+  const providers = [...new Set(COMBOS.map((c) => c.provider))];
+  const qEmb = new Map<string, { vec: number[]; embedTime: number }>();
+  const embErr = new Map<string, string>();
+  const embTotal = providers.length * queries.length;
+  let embDone = 0;
+  for (const provider of providers) {
+    for (const q of queries) {
+      try {
+        const t0 = performance.now();
+        const vec = await embedQuery(provider, q.text);
+        qEmb.set(`${provider}:${q.id}`, { vec, embedTime: round(performance.now() - t0) });
+      } catch (e) {
+        embErr.set(`${provider}:${q.id}`, (e as Error).message);
+      }
+      onProgress({ type: "progress", scope: "embed", label: `${provider} · ${q.id}`, done: ++embDone, total: embTotal });
+    }
+  }
+
+  // 2) Arama: her combo × sorgu × RUNS_PER_COMBO (cache'li vektörle).
+  // İlerleme SORGU başına yayınlanır (combo başına değil) ki uzun combo
+  // içindeki ~30 arama boyunca UI donuk görünmesin.
+  const combos: BenchComboStats[] = [];
+  const searchTotal = COMBOS.length * queries.length;
+  let searchDone = 0;
+  for (const combo of COMBOS) {
+    const runs: BenchRun[] = [];
+    let first = true; // combo'nun ilk koşusu = warm-up
+    for (const q of queries) {
+      const key = `${combo.provider}:${q.id}`;
+      const cached = qEmb.get(key);
+      if (!cached) {
+        runs.push({ queryId: q.id, warmup: first, error: embErr.get(key) ?? "embedding üretilemedi" });
+        first = false;
+      } else {
+        for (let r = 0; r < RUNS_PER_COMBO; r++) {
+          const warmup = first;
+          first = false;
+          try {
+            const t0 = performance.now();
+            const hits = await runSearch(cached.vec, combo.provider, combo.mode);
+            const searchTime = round(performance.now() - t0);
+            runs.push({
+              queryId: q.id,
+              warmup,
+              embedTime: cached.embedTime,
+              searchTime,
+              totalTime: round(cached.embedTime + searchTime),
+              top5: enrich(hits, docText),
+            });
+          } catch (e) {
+            runs.push({ queryId: q.id, warmup, error: (e as Error).message });
+          }
+        }
+      }
+      onProgress({
+        type: "progress",
+        scope: "search",
+        label: `${combo.label} · ${q.id}`,
+        done: ++searchDone,
+        total: searchTotal,
+      });
+    }
+    combos.push(buildComboStats(combo, runs));
+  }
+
+  const overlap = computeOverlap(
+    combos,
+    queries.map((q) => q.id)
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    queries: queries.map((q) => ({ id: q.id, type: q.type, text: q.text })),
+    combos,
+    overlap,
   };
 }
 

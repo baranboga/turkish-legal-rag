@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { COMBOS } from "@/benchmark/combos";
+import { INDEX_TARGETS } from "@/benchmark/combos";
 import type { IndexEvent, IndexResult } from "@/benchmark/api-types";
 
 interface ComboState {
@@ -17,7 +17,7 @@ export default function IndexClient({ initial = {} }: { initial?: Record<string,
   // Diskten gelen kayitli sonuclarla baslat (varsa "done"), yoksa "idle".
   const [state, setState] = useState<Record<string, ComboState>>(() =>
     Object.fromEntries(
-      COMBOS.map((c) => {
+      INDEX_TARGETS.map((c) => {
         const r = initial[c.id];
         return [c.id, r ? ({ status: "done", result: r } as ComboState) : ({ status: "idle" } as ComboState)];
       })
@@ -69,7 +69,7 @@ export default function IndexClient({ initial = {} }: { initial?: Record<string,
 
   async function runAll() {
     setBusy(true);
-    for (const c of COMBOS) {
+    for (const c of INDEX_TARGETS) {
       await runIndex(c.id); // sirali
     }
     setBusy(false);
@@ -95,7 +95,7 @@ export default function IndexClient({ initial = {} }: { initial?: Record<string,
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {COMBOS.map((c) => {
+        {INDEX_TARGETS.map((c) => {
           const s = state[c.id];
           const pct = s.total ? Math.round(((s.done ?? 0) / s.total) * 100) : s.status === "running" ? 5 : 0;
           return (
