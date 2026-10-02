@@ -19,6 +19,8 @@ next-env.d.ts
 
 # generated raw dataset cache (regenerate with `npm run fetch`)
 /data/raw.json
+# RAG ham verisi (regenerate with `npm run rag:fetch`)
+/data/rag-raw.json
 
 # logs / os
 *.log

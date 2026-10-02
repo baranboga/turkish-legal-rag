@@ -102,3 +102,70 @@ export const PINECONE_INDEX: Record<Provider, string> = {
   openai: PINECONE_INDEX_OPENAI,
   hf: PINECONE_INDEX_HF,
 };
+
+// ---------------------------------------------------------------------------
+// RAG (Hafta 7-8) — naive pipeline: chunk -> embed -> retrieve -> prompt -> generate
+// ---------------------------------------------------------------------------
+//
+// KARARLAR (Baran):
+//   - Vector store: pgvector (Supabase). Tek datastore; chunk metni + metadata +
+//     vektor tek tabloda, tek sorgu skorla birlikte hepsini doner. Iki chunking
+//     stratejisi = iki AYRI tablo (mevcut "embeddings iki tabloda" konvansiyonu).
+//   - Embedding: OpenAI text-embedding-3-small (yukaridaki OPENAI_* ile ayni;
+//     benchmark ile ayni saglayici, token/maliyet raporlamasi kolay).
+//   - Generation: OpenAI chat (streaming). Framework (LangChain/LlamaIndex) YOK;
+//     her adim ayri okunabilir fonksiyon. API key'ler yalnizca server tarafinda.
+
+/** Cevap ureten chat modeli. .env icinden override edilebilir. */
+export const RAG_CHAT_MODEL = process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-4o-mini";
+
+/**
+ * Chat modeli fiyatlari (USD / 1M token). Resmi OpenAI fiyatlari (model
+ * degisirse guncelle). Bilinmeyen model icin gpt-4o-mini oranina duser.
+ */
+export const CHAT_PRICE_PER_1M: Record<string, { input: number; output: number }> = {
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "gpt-4o": { input: 2.5, output: 10 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6 },
+  "gpt-4.1": { input: 2, output: 8 },
+};
+export function chatPrice(model: string): { input: number; output: number } {
+  return CHAT_PRICE_PER_1M[model] ?? CHAT_PRICE_PER_1M["gpt-4o-mini"];
+}
+
+/**
+ * Chunking parametreleri.
+ *   - FIXED: ~500 token pencere, 50 token overlap (kayan pencere).
+ *   - Token sayaci olarak gercek tokenizer yerine karakter yaklasikligi
+ *     kullaniyoruz (naive; ek bagimlilik yok). Turkce o200k tokenizer'da
+ *     ~1 token ≈ 3 karakter. Chunk boyutu kritik hassasiyet gerektirmez;
+ *     maliyet/token RAPORLAMASI ise API'nin GERCEK usage'ini kullanir.
+ */
+export const RAG_CHARS_PER_TOKEN = 3;
+export const FIXED_CHUNK_TOKENS = 500;
+export const FIXED_CHUNK_OVERLAP_TOKENS = 50;
+/** structure-aware: bir bolum bu token esigini asarsa icinde fixed-size'a duser. */
+export const STRUCTURE_MAX_SECTION_TOKENS = 500;
+
+/** Retrieval varsayilan top-k (UI'dan override edilebilir). */
+export const RAG_TOP_K_DEFAULT = 5;
+export const RAG_TOP_K_MAX = 20;
+
+/**
+ * RAG kendi veri dosyasini kullanir: data/rag-raw.json (npm run rag:fetch).
+ * Neden ayri: benchmark'in raw.json'u ortak baslik KIRPILMIS + 2000 karaktere
+ * kesilmis; bu yuzden (a) kararlarin ~%64'unde "Esas/Karar No" basligi silinmis
+ * (karar no metadata'si cikmaz) ve (b) 2000 karakter ~tek chunk kalir. RAG icin
+ * ayni 400 karari (ayni deterministik sampling) HAM + daha uzun metinle cekeriz.
+ */
+export const RAG_DATA_FILE = "data/rag-raw.json";
+/** rag-fetch: dokuman basina alinacak azami karakter (embedding maliyetini sinirlar). */
+export const RAG_TEXT_MAX_CHARS = 16000;
+
+/** Iki strateji = iki pgvector tablosu. */
+export const RAG_STRATEGIES = ["fixed", "structure"] as const;
+export type RagStrategy = (typeof RAG_STRATEGIES)[number];
+export const RAG_CHUNK_TABLE: Record<RagStrategy, string> = {
+  fixed: "rag_chunks_fixed",
+  structure: "rag_chunks_structure",
+};

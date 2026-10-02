@@ -18,7 +18,9 @@
     "embed": "tsx scripts/02-embed.ts",
     "pinecone": "tsx scripts/03-pinecone-setup.ts",
     "benchmark": "tsx scripts/04-benchmark.ts",
-    "sync-test": "tsx scripts/05-sync-test.ts"
+    "sync-test": "tsx scripts/05-sync-test.ts",
+    "rag:fetch": "tsx scripts/06-rag-fetch.ts",
+    "rag:ingest": "tsx scripts/07-rag-ingest.ts"
   },
   "dependencies": {
     "@pinecone-database/pinecone": "^8.2.0",

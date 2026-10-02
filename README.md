@@ -24,19 +24,32 @@ drizzle/
   hnsw-indexes.sql      # HNSW DDL referansi (benchmark tarafindan timed uygulanir)
 scripts/
   00-verify-db.ts       # pgvector surumu + HNSW destegi dogrulamasi
-  01-fetch-data.ts      # veri cekme
+  01-fetch-data.ts      # veri cekme (benchmark; baslik kirpilir, 2000 char)
   02-embed.ts           # OpenAI + HF embedding -> Postgres
   03-pinecone-setup.ts  # iki index olustur + upsert
   04-benchmark.ts       # olcum harness'i (HNSW index'i burada timed olusturulur)
   05-sync-test.ts       # sync davranisi testi
+  06-rag-fetch.ts       # RAG ham verisi (baslik KIRPILMAZ, uzun metin) -> rag-raw.json
+  07-rag-ingest.ts      # chunk + embed + pgvector (iki strateji) + HNSW
 src/
-  config.ts             # CURRENT_RUN + model/boyut/parametreler (tek kaynak)
+  config.ts             # CURRENT_RUN + model/boyut/parametreler + RAG ayarlari (tek kaynak)
   db/{schema,client}.ts # Drizzle sema + postgres-js client (pooler: prepare:false)
   embeddings/{openai,hf}.ts
   search/{index,pgvector,pinecone}.ts   # search(queryText, provider, mode, filter?)
+  rag/                  # NAIVE RAG pipeline (Hafta 7-8) — asagiya bak
+    chunk.ts            # chunkFixed() + chunkStructure() (saf)
+    metadata.ts         # parseKararNo() + resolveTarih() (saf)
+    prompt.ts           # buildPrompt() (saf)
+    retrieve.ts         # retrieve(query, strategy, topK) -> hits + skor + latency
+    generate.ts         # streamGenerate() — OpenAI chat streaming + token/maliyet
+    ingest.ts           # chunk->embed->pgvector + HNSW (route + CLI paylasir)
+    types.ts            # paylasilan tipler (client+server guvenli)
   report.ts             # benchmark.md uretici
   results.ts            # UI icin results/ okuyucu
-  app/{compare,metrics}/ # UI sayfalari
+  app/{compare,metrics}/ # statik UI sayfalari
+  app/{indexer,search,benchmark}/ # canli benchmark UI
+  app/chat/             # NAIVE RAG sohbet UI (/chat)
+  app/api/rag/{chat,ingest}/ # RAG route'lari (NDJSON stream)
 results/<run>/          # uretilen ciktilar (bkz. results/README.md)
 ```
 
@@ -143,6 +156,119 @@ npm run dev
 - **Sync testi:** `documents`'tan 5 kayıt silinir; FK `on delete cascade`
   pgvector embedding'lerini otomatik siler, Pinecone'a **dokunulmaz** (varsayılan
   davranış ölçülür, ek temizlik kodu yok).
+
+---
+
+## RAG — naive pipeline (Hafta 7-8)
+
+Vektör store karşılaştırmasının **üstüne** kurulan, kasıtlı olarak **naive** bir
+RAG hattı. Hybrid search ve reranking **Hafta 8'e** bırakıldı; bu adımda amaç
+uçtan uca çalışan, okunabilir ve ölçülebilir bir temel.
+
+### Mimari — her adım ayrı, okunabilir bir fonksiyon
+
+```
+chunk()  ->  embed()  ->  retrieve()  ->  buildPrompt()  ->  generate()
+ (saf)      (OpenAI)      (pgvector)        (saf)          (OpenAI stream)
+```
+
+- **Vektör store:** **pgvector (Supabase)**. Tek datastore; chunk metni +
+  metadata + vektör **aynı tabloda**, tek sorgu skorla birlikte hepsini döner.
+  İki chunking stratejisi = iki **ayrı tablo** (`rag_chunks_fixed`,
+  `rag_chunks_structure`) — repodaki "embedding'ler iki ayrı tabloda"
+  konvansiyonunun aynısı.
+- **Embedding:** OpenAI `text-embedding-3-small` (1536) — generation ile aynı
+  sağlayıcı, token/maliyet raporlaması kolay.
+- **Generation:** OpenAI chat (`OPENAI_CHAT_MODEL`, default `gpt-4o-mini`),
+  **streaming**. API key'ler **yalnızca server tarafında** (route handler); UI
+  hiçbir key görmez, yalnızca `/api/rag/*` ile konuşur.
+
+### Neden framework (LangChain / LlamaIndex) kullanmadık?
+
+Bilinçli bir karar — bu bir **öğrenme/benchmark** reposu:
+
+1. **Şeffaflık.** RAG'ın gerçekte ne yaptığını (chunk sınırları, prompt'un tam
+   hali, retrieval skorları, token sayıları) adım adım görmek istiyoruz. Framework
+   bu adımları soyutlayıp gizler; burada her adım açıkça okunabilir tek bir
+   fonksiyon (`src/rag/*`) ve `/chat` debug panelinde modele giden **tam prompt**
+   görünür.
+2. **Tam kontrol + daha az bağımlılık.** Chunking stratejisi, prompt kuralları,
+   streaming ve maliyet ölçümü bize ait; sürüm kırılmaları / "sihirli" default'lar
+   yok. Zaten elimizde çıplak **OpenAI SDK** ve **Supabase/postgres-js** client'ları
+   var — araya bir katman koymanın net faydası yok.
+3. **Ölçülebilirlik.** Retrieval ve generation latency'sini **ayrı**, token ve
+   maliyeti **gerçek** `usage`'dan ölçüyoruz; framework'ün kendi çağrı katmanı bu
+   ölçümleri bulanıklaştırırdı.
+4. **Büyümeye hazır.** Hafta 8'de hybrid search + reranking'i bu açık hatta
+   doğrudan ekleyeceğiz; soyutlamayı önce öğrenip sonra (gerekirse) seçmek daha
+   sağlıklı.
+
+### Çalıştırma
+
+`.env` dolu (en az `OPENAI_API_KEY` + `DATABASE_URL`) olmalı:
+
+```powershell
+npm run rag:fetch     # data/rag-raw.json (public dataset, key gerekmez)
+npm run rag:ingest    # iki stratejiyi de chunk+embed -> pgvector + HNSW
+# veya tek strateji:  npm run rag:ingest -- structure
+npm run dev
+# http://localhost:3001/chat
+```
+
+> `rag:fetch` **ayrı** bir ham dosya (`data/rag-raw.json`) üretir; benchmark'ın
+> `raw.json`'una dokunmaz. Neden ayrı: benchmark verisinde ortak başlık kırpılmış
+> ve metin 2000 karaktere kesilmiş — bu yüzden (a) kararların ~%64'ünde "Esas/Karar
+> No" başlığı silinmiş (**karar no** metadata'sı çıkmaz) ve (b) 2000 karakter
+> ~tek chunk kalır. RAG için aynı 400 kararı (aynı deterministik örnekleme)
+> **başlık kırpmadan, daha uzun** metinle çekeriz.
+
+### 1) Chunking — iki strateji, iki tablo
+
+| Strateji | Tablo | Nasıl |
+| --- | --- | --- |
+| `fixed` | `rag_chunks_fixed` | ~500 token kayan pencere, 50 token overlap. Künye sonrası gövdeden başlar. |
+| `structure` | `rag_chunks_structure` | Kararın kendi bölüm başlıklarına göre (`İSTEMİN KONUSU`, `GEREKÇE`, `SONUÇ`…). Başlık yoksa **recursive fixed-size fallback**; çok büyük bölüm de içinde fixed-size'a düşer. |
+
+Her chunk'a metadata: **karar no** (`E.2019/9 K.2020/3` — künyeden regex), **tarih**
+(ISO; `karar_tarihi` alanı, fallback metinden parse), **bölüm adı** (structure'da
+başlık; fixed'de `—`). Token sayacı gerçek tokenizer yerine karakter yaklaşıklığı
+(`RAG_CHARS_PER_TOKEN`, naive); maliyet **raporlaması** API'nin gerçek `usage`'ını
+kullanır.
+
+### 2) Retrieval
+
+`retrieve(query, strategy, topK)` — sorguyu embed eder, ilgili strateji tablosunda
+pgvector cosine ile **top-k** chunk'ı **similarity skoruyla** döner. `top-k` UI'dan
+ayarlanabilir (varsayılan **5**). Embed ve arama süresi **ayrı** ölçülür.
+
+### 3) Generation
+
+Sistem prompt'u modele: **yalnızca verilen kaynaklara** dayan, her iddiadan sonra
+`[1]`, `[2]` ile **kaynak göster**, kaynaklarda cevap yoksa **aynen** şunu yaz:
+`Bu soruya verilen kararlarda cevap bulamadım.` Cevap **streaming** ile gelir
+(`temperature=0`). Prompt insası `src/rag/prompt.ts` içinde saf bir fonksiyon;
+`/chat` debug panelinde gösterilen "modele giden tam prompt" ile **birebir aynı**.
+
+### 4) UI (`/chat`)
+
+- Solda **chat**, sağda **Kaynaklar** paneli.
+- Her kaynak: **karar no · tarih · bölüm · similarity skoru · chunk metni**.
+- Cevaptaki `[1]`'e tıklayınca ilgili kaynak panelde **vurgulanır** (scroll + ring).
+- **Chunking stratejisi** (fixed / structure-aware) ve **top-k** UI'dan seçilebilir.
+- Yükleme durumları ayrı: **"Aranıyor…"** → **"Cevap yazılıyor…"**.
+- **Debug** görünümü: modele gönderilen tam prompt (system + user) açılır panelde.
+- Her sorgu için **latency** (retrieval / generation **ayrı**) ve **token/maliyet**
+  (sorgu embedding + prompt/completion, gerçek `usage`) gösterilir.
+
+### Naive sınırlar (bilinçli)
+
+- Hybrid (lexical + vektör) arama ve reranking **yok** (Hafta 8).
+- Tek tur Q&A (önceki cevaplar prompt'a eklenmez); konuşma geçmişi retrieval'a
+  dahil edilmez.
+- Chunk tabloları drizzle migration'a dahil **değil**; `rag:ingest` idempotent raw
+  DDL ile kurar (repodaki `createHnswIndex` ile aynı runtime-DDL yaklaşımı) — RAG
+  modülü kendi kendine yeter.
+- Token sayacı chunk boyutlandırmada yaklaşık (gerçek tokenizer değil).
 
 ---
 

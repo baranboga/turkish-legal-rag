@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { RAG_DATA_FILE } from "./config";
 import { stripDecisionHeader } from "./text";
 import type { Query, RawRecord } from "./types";
 
@@ -21,4 +22,40 @@ export function loadQueries(): Query[] {
     queries: Query[];
   };
   return parsed.queries;
+}
+
+/**
+ * RAG ham kayitlari — data/rag-raw.json (npm run rag:fetch).
+ * benchmark'in raw.json'undan FARKLI: ortak baslik KIRPILMAZ ve metin daha uzun
+ * tutulur (chunking + karar no metadata'si icin). Dosya yoksa acik hata verir.
+ */
+export interface RagRawRecord {
+  sourceId: string;
+  text: string;
+  date: string | null;
+  year: number | null;
+  category: string;
+}
+
+export function loadRagRecords(): RagRawRecord[] {
+  // Once RAG'a ozel dosya (rag-raw.json: baslik kirpilmamis, uzun metin).
+  // Yoksa benchmark'in raw.json'una dus (baslik kirpik + 2000 char ama ayni 400
+  // karar; karar no yine ~391/400 cikar). rag-raw.json dataset gated/erisilmezse
+  // bu fallback RAG'i calisir tutar.
+  for (const file of [RAG_DATA_FILE, "data/raw.json"]) {
+    try {
+      const recs = JSON.parse(readFileSync(file, "utf8")) as RagRawRecord[];
+      if (file !== RAG_DATA_FILE) {
+        console.warn(
+          `[rag] ${RAG_DATA_FILE} bulunamadi; ${file} kullaniliyor (metin 2000 char, baslik kirpik).`
+        );
+      }
+      return recs;
+    } catch {
+      /* sonraki dosyayi dene */
+    }
+  }
+  throw new Error(
+    `Ne ${RAG_DATA_FILE} ne data/raw.json okunabildi. "npm run rag:fetch" veya "npm run fetch" calistir.`
+  );
 }

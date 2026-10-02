@@ -26,6 +26,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/benchmark" className="hover:underline">
               /benchmark
             </Link>
+            <Link href="/chat" className="hover:underline">
+              /chat
+            </Link>
             <span className="ml-auto rounded bg-neutral-100 px-2 py-1 font-mono text-xs text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
               run: {CURRENT_RUN}
             </span>

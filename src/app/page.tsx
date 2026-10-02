@@ -17,6 +17,11 @@ const cards = [
     title: "/benchmark",
     desc: "Sabit sorgu seti, her sorgu RUNS_PER_COMBO kez, p50/p95/ortalama tablosu, top-5 örtüşme paneli, tahmin formu, JSON export.",
   },
+  {
+    href: "/chat",
+    title: "/chat",
+    desc: "Naive RAG (Hafta 7-8): chunk → embed → retrieve → prompt → generate. Streaming cevap, [n] kaynak gösterimi, sağda Kaynaklar paneli, latency + token/maliyet, debug prompt.",
+  },
 ];
 
 export default function Home() {
@@ -34,7 +39,7 @@ export default function Home() {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((c) => (
           <Link
             key={c.href}
